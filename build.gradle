@@ -1,0 +1,149 @@
+import com.lbcap.common.gradletasks.buildversion.BuildVersionInfo
+import com.lbcap.common.gradletasks.buildversion.IncrementAndSaveVersionNumber
+
+plugins {
+    id 'java-gradle-plugin'
+    id 'maven-publish'
+    id 'groovy'
+}
+
+BuildVersionInfo.setBuildVersionFromFile(project.ext, project.rootDir.absolutePath)
+
+group 'com.lbcap'
+if (project.hasProperty('overrideVersion')) {
+    version project.overrideVersion
+} else {
+    version project.buildVersionInfo.versionNumber
+}
+
+repositories {
+    mavenCentral()
+}
+
+sourceCompatibility = 1.11
+targetCompatibility = 1.11
+
+publishing {
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri(GITHUB_PKGS_URL)
+
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
+    publications {
+        gpr(MavenPublication) {
+            from components.java
+        }
+    }
+}
+/* Required to copy all the java classes from 'buildSrc'
+** and package it as part of commons
+** Groovy is used to compile both Java and Groovy classes.
+ */
+sourceSets.main.groovy {
+    srcDirs = ["$buildDir/mergedSources"]
+}
+
+task mergeSources(type: Copy) {
+    File file = new File ("$buildDir/mergedSources")
+    file.deleteDir()
+
+    from 'buildSrc/src/main/java'
+    from 'buildSrc/src/main/groovy'
+    from 'src/main/java'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE // (see https://docs.gradle.org/current/javadoc/org/gradle/api/file/DuplicatesStrategy.html#EXCLUDE)
+    into "$buildDir/mergedSources"
+}
+
+compileGroovy.dependsOn mergeSources
+
+dependencies {
+    implementation 'com.fasterxml.jackson.core:jackson-core:2.13.3'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.13.3'
+
+    implementation 'org.apache.commons:commons-lang3:3.11'
+    implementation group: 'com.google.guava', name: 'guava', version: '30.0-jre'
+    testImplementation 'org.spockframework:spock-core:2.0-M4-groovy-3.0'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events = [ "skipped", "failed", "standardOut", "standardError"]
+    }
+}
+
+project.publish.finalizedBy 'incrementAndSaveVersionNumber'
+
+task incrementAndSaveVersionNumber(type: IncrementAndSaveVersionNumber){
+    doLast {System.out.println(project.buildVersionInfo.buildNumber)}
+}
+
+gradlePlugin {
+    automatedPublishing = false
+    // Define the plugin
+    plugins {
+        lbcapServicePlugin {
+            id = 'com.lbcap.plugins.lbcap-service-plugin'
+            displayName = 'lbcap-service-plugin'
+            description = 'Plugin for gradle project submodule that creates service.'
+            implementationClass = 'com.lbcap.common.plugins.LbcapServicePlugin'
+        }
+        //Deprecated. Renamed to lbcap-client-plugin
+        lbcapLibraryPlugin {
+            id = 'com.lbcap.plugins.lbcap-library-plugin'
+            displayName = 'lbcap-library-plugin'
+            description = 'Plugin for gradle project submodule that creates service client.'
+            implementationClass = 'com.lbcap.common.plugins.LbcapClientPlugin'
+        }
+        lbcapClientPlugin {
+            id = 'com.lbcap.plugins.lbcap-client-plugin'
+            displayName = 'lbcap-client-plugin'
+            description = 'Plugin for gradle project submodule that creates service client.'
+            implementationClass = 'com.lbcap.common.plugins.LbcapClientPlugin'
+        }
+        lbcapModelPlugin {
+            id = 'com.lbcap.plugins.lbcap-model-plugin'
+            displayName = 'lbcap-model-plugin'
+            description = 'Plugin for gradle project submodule that contains service data model casses.'
+            implementationClass = 'com.lbcap.common.plugins.LbcapModelPlugin'
+        }
+        lbcapCommonPlugin {
+            id = 'com.lbcap.plugins.lbcap-common-plugin'
+            displayName = 'lbcap-common-plugin'
+            description = 'Plugin for lbcap gradle project for any commons project used via other projects.'
+            implementationClass = 'com.lbcap.common.plugins.LbcapCommonPlugin'
+        }
+    }
+}
+
+// Add a source set for the functional test suite
+sourceSets {
+    functionalTest {
+    }
+}
+
+gradlePlugin.testSourceSets(sourceSets.functionalTest)
+configurations.functionalTestImplementation.extendsFrom(configurations.testImplementation)
+
+// Add a task to run the functional tests
+tasks.register('functionalTest', Test) {
+    testClassesDirs = sourceSets.functionalTest.output.classesDirs
+    classpath = sourceSets.functionalTest.runtimeClasspath
+    useJUnitPlatform()
+}
+
+tasks.named('check') {
+    // Run the functional tests as part of `check`
+    dependsOn(tasks.functionalTest)
+}
+
+tasks.named('test') {
+    // Use junit platform for unit tests.
+    useJUnitPlatform()
+}
